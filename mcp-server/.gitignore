@@ -8,7 +8,7 @@ venv/
 env/
 *.egg-info/
 .eggs/
-dist/
+# dist/  # Commented out - we need frontend/dist for production
 build/
 
 # Database
