@@ -16,6 +16,15 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+# =============================================================================
+# Port Configuration
+# External ports (nginx SSL) -> Internal ports (services)
+# =============================================================================
+MCP_FRONTEND_PORT=15174      # Internal port, nginx listens on 5174
+MCP_BACKEND_PORT=18800       # Internal port, nginx listens on 8800
+TRUCK_FRONTEND_PORT=15173    # Internal port, nginx listens on 5173
+TRUCK_BACKEND_PORT=18000     # Internal port, nginx listens on 8000
+
 log_info() {
     echo -e "${GREEN}[INFO]${NC} $1"
 }
@@ -170,8 +179,8 @@ start_services() {
     LOG_DIR="$SCRIPT_DIR/logs"
     mkdir -p "$LOG_DIR"
 
-    # MCP Server Backend (port 8800)
-    log_info "Starting MCP Server Backend on port 8800..."
+    # MCP Server Backend
+    log_info "Starting MCP Server Backend on port $MCP_BACKEND_PORT..."
     cd "$SCRIPT_DIR/mcp-server/backend"
     source venv/bin/activate
 
@@ -181,29 +190,31 @@ start_services() {
     fi
 
     export DATABASE_URL="sqlite:///$SCRIPT_DIR/data/mcp_generator.db"
-    nohup python3 -m uvicorn main:app --host 0.0.0.0 --port 8800 > "$LOG_DIR/mcp-server-backend.log" 2>&1 &
+    nohup python3 -m uvicorn main:app --host 127.0.0.1 --port $MCP_BACKEND_PORT > "$LOG_DIR/mcp-server-backend.log" 2>&1 &
     echo $! > "$PID_DIR/mcp-server-backend.pid"
     deactivate
 
-    # MCP Server Frontend (port 5174)
-    log_info "Starting MCP Server Frontend on port 5174..."
+    # MCP Server Frontend
+    log_info "Starting MCP Server Frontend on port $MCP_FRONTEND_PORT..."
     cd "$SCRIPT_DIR/mcp-server/frontend"
-    nohup npm run dev -- --host --port 5174 > "$LOG_DIR/mcp-server-frontend.log" 2>&1 &
+    export API_URL="http://127.0.0.1:$MCP_BACKEND_PORT"
+    nohup npm run dev -- --host --port $MCP_FRONTEND_PORT > "$LOG_DIR/mcp-server-frontend.log" 2>&1 &
     echo $! > "$PID_DIR/mcp-server-frontend.pid"
 
-    # Truck Loading Backend (port 8000)
-    log_info "Starting Truck Loading Backend on port 8000..."
+    # Truck Loading Backend
+    log_info "Starting Truck Loading Backend on port $TRUCK_BACKEND_PORT..."
     cd "$SCRIPT_DIR/truck-loading/backend"
     source venv/bin/activate
     export DATABASE_URL="sqlite:///$SCRIPT_DIR/data/lng_loading.db"
-    nohup python3 -m uvicorn main:app --host 0.0.0.0 --port 8000 > "$LOG_DIR/truck-loading-backend.log" 2>&1 &
+    nohup python3 -m uvicorn main:app --host 127.0.0.1 --port $TRUCK_BACKEND_PORT > "$LOG_DIR/truck-loading-backend.log" 2>&1 &
     echo $! > "$PID_DIR/truck-loading-backend.pid"
     deactivate
 
-    # Truck Loading Frontend (port 5173)
-    log_info "Starting Truck Loading Frontend on port 5173..."
+    # Truck Loading Frontend
+    log_info "Starting Truck Loading Frontend on port $TRUCK_FRONTEND_PORT..."
     cd "$SCRIPT_DIR/truck-loading/frontend"
-    nohup npm run dev -- --host --port 5173 > "$LOG_DIR/truck-loading-frontend.log" 2>&1 &
+    export API_URL="http://127.0.0.1:$TRUCK_BACKEND_PORT"
+    nohup npm run dev -- --host --port $TRUCK_FRONTEND_PORT > "$LOG_DIR/truck-loading-frontend.log" 2>&1 &
     echo $! > "$PID_DIR/truck-loading-frontend.pid"
 
     cd "$SCRIPT_DIR"
@@ -214,12 +225,12 @@ start_services() {
     log_info "All services started!"
     echo ""
     echo "=========================================="
-    echo "Services running:"
+    echo "Services running (internal ports):"
     echo "=========================================="
-    echo "MCP Server Frontend:      http://localhost:5174"
-    echo "MCP Server Backend:       http://localhost:8800"
-    echo "Truck Loading Frontend:   http://localhost:5173"
-    echo "Truck Loading Backend:    http://localhost:8000"
+    echo "MCP Server Frontend:      http://127.0.0.1:$MCP_FRONTEND_PORT  (nginx: 5174)"
+    echo "MCP Server Backend:       http://127.0.0.1:$MCP_BACKEND_PORT  (nginx: 8800)"
+    echo "Truck Loading Frontend:   http://127.0.0.1:$TRUCK_FRONTEND_PORT  (nginx: 5173)"
+    echo "Truck Loading Backend:    http://127.0.0.1:$TRUCK_BACKEND_PORT  (nginx: 8000)"
     echo ""
     echo "Logs: $LOG_DIR/"
     echo "=========================================="
