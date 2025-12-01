@@ -1,0 +1,60 @@
+services:
+  # ===== MCP Server =====
+  mcp-server-backend:
+    build:
+      context: ./mcp-server
+      dockerfile: Dockerfile.dev
+    ports:
+      - "8800:8000"
+    volumes:
+      - ./mcp-server/backend:/app
+      - shared-data:/app/data
+    env_file:
+      - ./mcp-server/.env
+    environment:
+      - DATABASE_URL=sqlite:///./data/mcp_generator.db
+      - MCP_SERVER_BASE_URL=${MCP_SERVER_BASE_URL:-http://localhost:8800}
+
+  mcp-server-frontend:
+    image: node:20-alpine
+    working_dir: /app
+    ports:
+      - "5174:3000"
+    volumes:
+      - ./mcp-server/frontend:/app
+      - /app/node_modules
+    environment:
+      - API_URL=http://mcp-server-backend:8000
+    command: sh -c "npm install && npm run dev -- --host"
+    depends_on:
+      - mcp-server-backend
+
+  # ===== Truck Loading =====
+  truck-loading-backend:
+    build:
+      context: ./truck-loading
+      dockerfile: Dockerfile.dev
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./truck-loading/backend:/app
+      - shared-data:/app/data
+    environment:
+      - DATABASE_URL=sqlite:///./data/lng_loading.db
+
+  truck-loading-frontend:
+    image: node:20-alpine
+    working_dir: /app
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./truck-loading/frontend:/app
+      - /app/node_modules
+    environment:
+      - API_URL=http://truck-loading-backend:8000
+    command: sh -c "npm install && npm run dev -- --host"
+    depends_on:
+      - truck-loading-backend
+
+volumes:
+  shared-data:

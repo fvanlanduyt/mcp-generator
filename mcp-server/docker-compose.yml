@@ -1,0 +1,15 @@
+services:
+  mcp-server:
+    build: .
+    ports:
+      - "8800:8000"
+    volumes:
+      - mcp-data:/data
+    environment:
+      - DATABASE_URL=sqlite:////data/mcp_generator.db
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - MCP_SERVER_BASE_URL=${MCP_SERVER_BASE_URL:-http://localhost:8800}
+    restart: unless-stopped
+
+volumes:
+  mcp-data:
