@@ -26,7 +26,7 @@ yarn-debug.log*
 yarn-error.log*
 
 # Build outputs
-frontend/dist/
+# frontend/dist/  # Keep for production deployment
 backend/static/
 
 # IDE

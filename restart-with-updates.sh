@@ -19,10 +19,9 @@ NC='\033[0m' # No Color
 # =============================================================================
 # Port Configuration
 # External ports (nginx SSL) -> Internal ports (services)
+# Frontends are served as static files by nginx (no Node.js needed)
 # =============================================================================
-MCP_FRONTEND_PORT=15174      # Internal port, nginx listens on 5174
 MCP_BACKEND_PORT=18800       # Internal port, nginx listens on 8800
-TRUCK_FRONTEND_PORT=15173    # Internal port, nginx listens on 5173
 TRUCK_BACKEND_PORT=18000     # Internal port, nginx listens on 8000
 
 log_info() {
@@ -59,18 +58,6 @@ stop_services() {
         rm -f "$PID_DIR/mcp-server-backend.pid"
     fi
 
-    # Stop MCP Server Frontend
-    if [ -f "$PID_DIR/mcp-server-frontend.pid" ]; then
-        PID=$(cat "$PID_DIR/mcp-server-frontend.pid")
-        if kill -0 "$PID" 2>/dev/null; then
-            log_info "Stopping MCP Server Frontend (PID: $PID)..."
-            kill "$PID" 2>/dev/null || true
-            sleep 2
-            kill -9 "$PID" 2>/dev/null || true
-        fi
-        rm -f "$PID_DIR/mcp-server-frontend.pid"
-    fi
-
     # Stop Truck Loading Backend
     if [ -f "$PID_DIR/truck-loading-backend.pid" ]; then
         PID=$(cat "$PID_DIR/truck-loading-backend.pid")
@@ -83,23 +70,9 @@ stop_services() {
         rm -f "$PID_DIR/truck-loading-backend.pid"
     fi
 
-    # Stop Truck Loading Frontend
-    if [ -f "$PID_DIR/truck-loading-frontend.pid" ]; then
-        PID=$(cat "$PID_DIR/truck-loading-frontend.pid")
-        if kill -0 "$PID" 2>/dev/null; then
-            log_info "Stopping Truck Loading Frontend (PID: $PID)..."
-            kill "$PID" 2>/dev/null || true
-            sleep 2
-            kill -9 "$PID" 2>/dev/null || true
-        fi
-        rm -f "$PID_DIR/truck-loading-frontend.pid"
-    fi
-
     # Also kill any orphaned processes
-    pkill -f "uvicorn.*mcp-server" 2>/dev/null || true
-    pkill -f "uvicorn.*truck-loading" 2>/dev/null || true
-    pkill -f "vite.*mcp-server" 2>/dev/null || true
-    pkill -f "vite.*truck-loading" 2>/dev/null || true
+    pkill -f "uvicorn.*main:app.*$MCP_BACKEND_PORT" 2>/dev/null || true
+    pkill -f "uvicorn.*main:app.*$TRUCK_BACKEND_PORT" 2>/dev/null || true
 
     log_info "All services stopped."
 }
@@ -115,7 +88,7 @@ pull_updates() {
 }
 
 # =============================================================================
-# Install dependencies
+# Install dependencies (backends only - frontends are pre-built static files)
 # =============================================================================
 install_dependencies() {
     log_info "Installing dependencies..."
@@ -123,12 +96,6 @@ install_dependencies() {
     # Check for Python/pip
     if ! command -v python3 &> /dev/null; then
         log_error "Python3 is not installed. Please install Python 3.11+"
-        exit 1
-    fi
-
-    # Check for Node.js/npm
-    if ! command -v npm &> /dev/null; then
-        log_error "npm is not installed. Please install Node.js 18+"
         exit 1
     fi
 
@@ -142,11 +109,6 @@ install_dependencies() {
     pip install -q -r requirements.txt
     deactivate
 
-    # MCP Server Frontend
-    log_info "Installing MCP Server frontend dependencies..."
-    cd "$SCRIPT_DIR/mcp-server/frontend"
-    npm install --silent
-
     # Truck Loading Backend
     log_info "Installing Truck Loading backend dependencies..."
     cd "$SCRIPT_DIR/truck-loading/backend"
@@ -157,20 +119,15 @@ install_dependencies() {
     pip install -q -r requirements.txt
     deactivate
 
-    # Truck Loading Frontend
-    log_info "Installing Truck Loading frontend dependencies..."
-    cd "$SCRIPT_DIR/truck-loading/frontend"
-    npm install --silent
-
     cd "$SCRIPT_DIR"
     log_info "All dependencies installed."
 }
 
 # =============================================================================
-# Start all services
+# Start all services (backends only - frontends served by nginx as static files)
 # =============================================================================
 start_services() {
-    log_info "Starting all services..."
+    log_info "Starting backend services..."
 
     # Create data directory
     mkdir -p "$SCRIPT_DIR/data"
@@ -194,13 +151,6 @@ start_services() {
     echo $! > "$PID_DIR/mcp-server-backend.pid"
     deactivate
 
-    # MCP Server Frontend
-    log_info "Starting MCP Server Frontend on port $MCP_FRONTEND_PORT..."
-    cd "$SCRIPT_DIR/mcp-server/frontend"
-    export API_URL="http://127.0.0.1:$MCP_BACKEND_PORT"
-    nohup npm run dev -- --host --port $MCP_FRONTEND_PORT > "$LOG_DIR/mcp-server-frontend.log" 2>&1 &
-    echo $! > "$PID_DIR/mcp-server-frontend.pid"
-
     # Truck Loading Backend
     log_info "Starting Truck Loading Backend on port $TRUCK_BACKEND_PORT..."
     cd "$SCRIPT_DIR/truck-loading/backend"
@@ -210,27 +160,22 @@ start_services() {
     echo $! > "$PID_DIR/truck-loading-backend.pid"
     deactivate
 
-    # Truck Loading Frontend
-    log_info "Starting Truck Loading Frontend on port $TRUCK_FRONTEND_PORT..."
-    cd "$SCRIPT_DIR/truck-loading/frontend"
-    export API_URL="http://127.0.0.1:$TRUCK_BACKEND_PORT"
-    nohup npm run dev -- --host --port $TRUCK_FRONTEND_PORT > "$LOG_DIR/truck-loading-frontend.log" 2>&1 &
-    echo $! > "$PID_DIR/truck-loading-frontend.pid"
-
     cd "$SCRIPT_DIR"
 
     # Wait a moment for services to start
     sleep 3
 
-    log_info "All services started!"
+    log_info "All backend services started!"
     echo ""
     echo "=========================================="
-    echo "Services running (internal ports):"
+    echo "Backend services running:"
     echo "=========================================="
-    echo "MCP Server Frontend:      http://127.0.0.1:$MCP_FRONTEND_PORT  (nginx: 5174)"
     echo "MCP Server Backend:       http://127.0.0.1:$MCP_BACKEND_PORT  (nginx: 8800)"
-    echo "Truck Loading Frontend:   http://127.0.0.1:$TRUCK_FRONTEND_PORT  (nginx: 5173)"
     echo "Truck Loading Backend:    http://127.0.0.1:$TRUCK_BACKEND_PORT  (nginx: 8000)"
+    echo ""
+    echo "Frontends served by nginx as static files:"
+    echo "MCP Server Frontend:      nginx port 5174 -> $SCRIPT_DIR/mcp-server/frontend/dist"
+    echo "Truck Loading Frontend:   nginx port 5173 -> $SCRIPT_DIR/truck-loading/frontend/dist"
     echo ""
     echo "Logs: $LOG_DIR/"
     echo "=========================================="
@@ -241,10 +186,10 @@ start_services() {
 # =============================================================================
 show_status() {
     echo ""
-    echo "Service Status:"
-    echo "---------------"
+    echo "Backend Service Status:"
+    echo "-----------------------"
 
-    for service in mcp-server-backend mcp-server-frontend truck-loading-backend truck-loading-frontend; do
+    for service in mcp-server-backend truck-loading-backend; do
         if [ -f "$PID_DIR/$service.pid" ]; then
             PID=$(cat "$PID_DIR/$service.pid")
             if kill -0 "$PID" 2>/dev/null; then
@@ -256,6 +201,20 @@ show_status() {
             echo -e "$service: ${YELLOW}Not started${NC}"
         fi
     done
+
+    echo ""
+    echo "Frontend Status (static files served by nginx):"
+    echo "------------------------------------------------"
+    if [ -d "$SCRIPT_DIR/mcp-server/frontend/dist" ]; then
+        echo -e "mcp-server-frontend: ${GREEN}Built${NC} ($SCRIPT_DIR/mcp-server/frontend/dist)"
+    else
+        echo -e "mcp-server-frontend: ${RED}Not built${NC}"
+    fi
+    if [ -d "$SCRIPT_DIR/truck-loading/frontend/dist" ]; then
+        echo -e "truck-loading-frontend: ${GREEN}Built${NC} ($SCRIPT_DIR/truck-loading/frontend/dist)"
+    else
+        echo -e "truck-loading-frontend: ${RED}Not built${NC}"
+    fi
     echo ""
 }
 
