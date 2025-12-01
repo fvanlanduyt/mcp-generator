@@ -25,7 +25,7 @@ services:
       - /app/node_modules
     environment:
       - API_URL=http://mcp-server-backend:8000
-    command: sh -c "npm install && npm run dev -- --host"
+    command: sh -c "export API_URL=http://mcp-server-backend:8000 && npm install && npm run dev -- --host"
     depends_on:
       - mcp-server-backend
 
@@ -52,7 +52,7 @@ services:
       - /app/node_modules
     environment:
       - API_URL=http://truck-loading-backend:8000
-    command: sh -c "npm install && npm run dev -- --host"
+    command: sh -c "export API_URL=http://truck-loading-backend:8000 && npm install && npm run dev -- --host"
     depends_on:
       - truck-loading-backend
 

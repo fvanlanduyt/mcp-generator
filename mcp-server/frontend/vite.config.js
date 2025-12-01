@@ -8,11 +8,11 @@ export default defineConfig({
     host: true,
     proxy: {
       '/api': {
-        target: 'http://mcp-server-backend:8000',
+        target: process.env.API_URL || 'http://localhost:8800',
         changeOrigin: true,
       },
       '/mcp': {
-        target: 'http://mcp-server-backend:8000',
+        target: process.env.API_URL || 'http://localhost:8800',
         changeOrigin: true,
       },
     },
