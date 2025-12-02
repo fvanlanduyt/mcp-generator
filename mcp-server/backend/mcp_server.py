@@ -245,7 +245,13 @@ async def mcp_sse(request: Request):
     # Build the messages endpoint URL
     # Use the request's base URL to construct the full endpoint
     scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
-    host = request.headers.get("host", request.url.netloc)
+    host = request.headers.get("x-forwarded-host", request.headers.get("host", request.url.netloc))
+    port = request.headers.get("x-forwarded-port", "")
+
+    # Add port to host if not already included and not standard port
+    if port and ":" not in host and port not in ("80", "443"):
+        host = f"{host}:{port}"
+
     messages_endpoint = f"{scheme}://{host}/mcp/messages?session_id={session_id}"
 
     async def event_generator():

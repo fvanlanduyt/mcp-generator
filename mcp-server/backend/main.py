@@ -75,6 +75,43 @@ async def health_check():
     return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
 
 
+# MCP Discovery endpoint for Claude Connectors
+@app.get("/.well-known/mcp.json")
+async def mcp_discovery(request: Request):
+    """
+    MCP Discovery endpoint for remote clients like Claude Connectors.
+    Returns information about how to connect to this MCP server.
+    """
+    scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
+    host = request.headers.get("x-forwarded-host", request.headers.get("host", request.url.netloc))
+    port = request.headers.get("x-forwarded-port", "")
+
+    # Add port to host if needed
+    if port and ":" not in host and port not in ("80", "443"):
+        host = f"{host}:{port}"
+
+    base_url = f"{scheme}://{host}"
+
+    return {
+        "mcp": {
+            "version": "2024-11-05",
+            "server": {
+                "name": "MCP Server Generator",
+                "version": "1.0.0"
+            },
+            "endpoints": {
+                "sse": f"{base_url}/mcp/sse",
+                "messages": f"{base_url}/mcp/messages"
+            },
+            "capabilities": {
+                "tools": True,
+                "resources": False,
+                "prompts": False
+            }
+        }
+    }
+
+
 # ============== Dashboard ==============
 @app.get("/api/dashboard/stats", response_model=DashboardStats)
 async def get_dashboard_stats(db: Session = Depends(get_db)):
