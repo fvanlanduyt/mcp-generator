@@ -1,7 +1,10 @@
 import json
+import uuid
+import asyncio
 from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
+from sse_starlette.sse import EventSourceResponse
 from sqlalchemy.orm import Session
 
 from database import SessionLocal
@@ -10,6 +13,9 @@ from db_connector import create_connector
 from sql_executor import SQLExecutor
 
 router = APIRouter()
+
+# Store for SSE sessions - maps session_id to message queue
+sse_sessions: Dict[str, asyncio.Queue] = {}
 
 
 class MCPProtocolHandler:
@@ -211,8 +217,114 @@ async def mcp_info():
             "version": "1.0.0",
             "protocol_version": MCPProtocolHandler.SUPPORTED_PROTOCOL_VERSION,
             "live_capabilities": live_count,
-            "status": "running"
+            "status": "running",
+            "transports": ["http", "sse"],
+            "sse_endpoint": "/mcp/sse"
         }
+    finally:
+        db.close()
+
+
+# =============================================================================
+# SSE Transport for MCP (for Claude Desktop and other remote clients)
+# =============================================================================
+
+@router.get("/mcp/sse")
+async def mcp_sse(request: Request):
+    """
+    SSE endpoint for MCP protocol.
+
+    Claude Desktop connects here and receives:
+    1. An 'endpoint' event with the URL to POST messages to
+    2. Response events for each JSON-RPC request
+    """
+    session_id = str(uuid.uuid4())
+    message_queue: asyncio.Queue = asyncio.Queue()
+    sse_sessions[session_id] = message_queue
+
+    # Build the messages endpoint URL
+    # Use the request's base URL to construct the full endpoint
+    scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
+    host = request.headers.get("host", request.url.netloc)
+    messages_endpoint = f"{scheme}://{host}/mcp/messages?session_id={session_id}"
+
+    async def event_generator():
+        try:
+            # First, send the endpoint event so the client knows where to POST messages
+            yield {
+                "event": "endpoint",
+                "data": messages_endpoint
+            }
+
+            # Keep connection alive and send responses
+            while True:
+                try:
+                    # Wait for messages with timeout to allow checking if client disconnected
+                    message = await asyncio.wait_for(message_queue.get(), timeout=30.0)
+                    yield {
+                        "event": "message",
+                        "data": json.dumps(message)
+                    }
+                except asyncio.TimeoutError:
+                    # Send keepalive ping
+                    yield {
+                        "event": "ping",
+                        "data": ""
+                    }
+                    continue
+
+                # Check if client is still connected
+                if await request.is_disconnected():
+                    break
+
+        finally:
+            # Cleanup session
+            if session_id in sse_sessions:
+                del sse_sessions[session_id]
+
+    return EventSourceResponse(
+        event_generator(),
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
+@router.post("/mcp/messages")
+async def mcp_messages(request: Request, session_id: str):
+    """
+    Endpoint for receiving MCP JSON-RPC messages from clients.
+    Processes the message and sends the response via SSE.
+    """
+    if session_id not in sse_sessions:
+        raise HTTPException(status_code=404, detail="Session not found. Connect to /mcp/sse first.")
+
+    try:
+        body = await request.json()
+    except Exception:
+        error_response = {
+            "jsonrpc": "2.0",
+            "id": None,
+            "error": {
+                "code": -32700,
+                "message": "Parse error"
+            }
+        }
+        await sse_sessions[session_id].put(error_response)
+        return JSONResponse({"status": "error", "message": "Parse error"})
+
+    db = SessionLocal()
+    try:
+        handler = MCPProtocolHandler(db)
+        response = handler.handle_request(body)
+
+        # Put the response in the session's queue to be sent via SSE
+        await sse_sessions[session_id].put(response)
+
+        # Also return the response directly for clients that prefer synchronous responses
+        return JSONResponse(response)
     finally:
         db.close()
 
