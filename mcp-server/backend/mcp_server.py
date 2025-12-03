@@ -19,6 +19,13 @@ router = APIRouter()
 # Store for SSE sessions - maps session_id to message queue
 sse_sessions: Dict[str, asyncio.Queue] = {}
 
+# Store for Streamable HTTP sessions - maps session_id to session data
+mcp_sessions: Dict[str, Dict[str, Any]] = {}
+
+def generate_session_id() -> str:
+    """Generate a cryptographically secure session ID (visible ASCII only)"""
+    return uuid.uuid4().hex + uuid.uuid4().hex  # 64 char hex string
+
 # =============================================================================
 # MCP Activity Logger - Track all MCP interactions
 # =============================================================================
@@ -66,7 +73,7 @@ mcp_activity = MCPActivityLog()
 class MCPProtocolHandler:
     """Handles MCP protocol requests"""
 
-    SUPPORTED_PROTOCOL_VERSION = "2024-11-05"
+    SUPPORTED_PROTOCOL_VERSION = "2025-03-26"
 
     def __init__(self, db: Session):
         self.db = db
@@ -227,64 +234,180 @@ class MCPProtocolHandler:
             }
 
 
+# =============================================================================
+# Streamable HTTP Transport (MCP 2025-03-26 spec)
+# Single /mcp endpoint supporting both POST and GET
+# =============================================================================
+
 @router.post("/mcp")
-async def mcp_endpoint(request: Request):
-    """MCP JSON-RPC endpoint"""
+async def mcp_streamable_post(request: Request):
+    """
+    Streamable HTTP POST endpoint for MCP.
+
+    Accepts JSON-RPC requests and returns either:
+    - application/json for simple responses
+    - text/event-stream for streaming responses
+    """
     client_ip = request.headers.get("x-forwarded-for", request.client.host if request.client else "unknown")
+    session_id = request.headers.get("mcp-session-id")
+    accept_header = request.headers.get("accept", "")
+
+    # Log connection attempt
+    mcp_activity.log("streamable_connect", {
+        "session_id": session_id,
+        "accept": accept_header,
+        "headers": {
+            "origin": request.headers.get("origin"),
+            "user-agent": request.headers.get("user-agent"),
+        }
+    }, client_ip=client_ip, session_id=session_id)
 
     try:
         body = await request.json()
     except Exception:
-        mcp_activity.log("error", {"error": "Parse error"}, client_ip=client_ip)
-        return JSONResponse({
-            "jsonrpc": "2.0",
-            "id": None,
-            "error": {
-                "code": -32700,
-                "message": "Parse error"
-            }
-        })
+        mcp_activity.log("error", {"error": "Parse error"}, client_ip=client_ip, session_id=session_id)
+        return JSONResponse(
+            {
+                "jsonrpc": "2.0",
+                "id": None,
+                "error": {"code": -32700, "message": "Parse error"}
+            },
+            status_code=400
+        )
 
-    # Log the incoming request
-    method = body.get("method", "unknown")
-    mcp_activity.log("request", {
-        "method": method,
-        "id": body.get("id"),
-        "params": body.get("params")
-    }, client_ip=client_ip)
+    # Handle batch requests (array) or single request
+    is_batch = isinstance(body, list)
+    requests = body if is_batch else [body]
 
+    # Check if this is a notification/response only (no id field means notification)
+    has_requests = any("id" in req and "method" in req for req in requests)
+
+    if not has_requests:
+        # Notification or response only - return 202 Accepted
+        mcp_activity.log("notification", {"body": body}, client_ip=client_ip, session_id=session_id)
+        return JSONResponse(None, status_code=202)
+
+    # Process requests
     db = SessionLocal()
+    responses = []
+    new_session_id = None
+
     try:
         handler = MCPProtocolHandler(db)
-        response = handler.handle_request(body)
 
-        # Log the response
-        mcp_activity.log("response", {
-            "method": method,
-            "id": response.get("id"),
-            "success": "result" in response,
-            "error": response.get("error")
-        }, client_ip=client_ip)
+        for req in requests:
+            method = req.get("method", "unknown")
 
-        return JSONResponse(response)
+            # Log the incoming request
+            mcp_activity.log("request", {
+                "method": method,
+                "id": req.get("id"),
+                "params": req.get("params")
+            }, client_ip=client_ip, session_id=session_id)
+
+            response = handler.handle_request(req)
+
+            # If this is an initialize response, create a session
+            if method == "initialize" and "result" in response:
+                new_session_id = generate_session_id()
+                mcp_sessions[new_session_id] = {
+                    "created": datetime.utcnow().isoformat(),
+                    "client_ip": client_ip,
+                    "initialized": True
+                }
+                mcp_activity.log("session_created", {
+                    "session_id": new_session_id
+                }, client_ip=client_ip, session_id=new_session_id)
+
+            # Log the response
+            mcp_activity.log("response", {
+                "method": method,
+                "id": response.get("id"),
+                "success": "result" in response,
+                "error": response.get("error")
+            }, client_ip=client_ip, session_id=session_id or new_session_id)
+
+            responses.append(response)
     finally:
         db.close()
 
+    # Determine response format
+    wants_stream = "text/event-stream" in accept_header
+
+    if wants_stream and len(responses) > 0:
+        # Return as SSE stream
+        async def event_generator():
+            for resp in responses:
+                yield {
+                    "event": "message",
+                    "data": json.dumps(resp)
+                }
+
+        sse_response = EventSourceResponse(event_generator())
+        if new_session_id:
+            sse_response.headers["mcp-session-id"] = new_session_id
+        return sse_response
+    else:
+        # Return as JSON
+        result = responses if is_batch else responses[0]
+        json_response = JSONResponse(result)
+        if new_session_id:
+            json_response.headers["mcp-session-id"] = new_session_id
+        return json_response
+
 
 @router.get("/mcp")
-async def mcp_info():
-    """Get MCP server info"""
+async def mcp_streamable_get(request: Request):
+    """
+    Streamable HTTP GET endpoint for MCP.
+
+    Opens an SSE stream for server-to-client messages.
+    Also serves as info endpoint if Accept header doesn't request SSE.
+    """
+    client_ip = request.headers.get("x-forwarded-for", request.client.host if request.client else "unknown")
+    session_id = request.headers.get("mcp-session-id")
+    accept_header = request.headers.get("accept", "")
+
+    # If client wants SSE stream
+    if "text/event-stream" in accept_header:
+        mcp_activity.log("sse_stream_open", {
+            "session_id": session_id
+        }, client_ip=client_ip, session_id=session_id)
+
+        async def event_generator():
+            try:
+                # Keep connection alive with pings
+                while True:
+                    if await request.is_disconnected():
+                        break
+                    yield {"event": "ping", "data": ""}
+                    await asyncio.sleep(30)
+            finally:
+                mcp_activity.log("sse_stream_close", {
+                    "session_id": session_id
+                }, client_ip=client_ip, session_id=session_id)
+
+        return EventSourceResponse(
+            event_generator(),
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no"
+            }
+        )
+
+    # Otherwise return server info
     db = SessionLocal()
     try:
         live_count = db.query(Capability).filter(Capability.is_live == True).count()
         return {
             "name": "MCP Server Generator",
             "version": "1.0.0",
-            "protocol_version": MCPProtocolHandler.SUPPORTED_PROTOCOL_VERSION,
+            "protocol_version": "2025-03-26",
             "live_capabilities": live_count,
             "status": "running",
-            "transports": ["http", "sse"],
-            "sse_endpoint": "/mcp/sse"
+            "transport": "streamable-http",
+            "active_sessions": len(mcp_sessions)
         }
     finally:
         db.close()
