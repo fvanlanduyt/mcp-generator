@@ -23,6 +23,7 @@ NC='\033[0m' # No Color
 # =============================================================================
 MCP_BACKEND_PORT=18800       # Internal port, nginx listens on 8800
 TRUCK_BACKEND_PORT=18000     # Internal port, nginx listens on 8000
+HOLIDAYS_BACKEND_PORT=18001  # Internal port, nginx listens on 8001
 
 log_info() {
     echo -e "${GREEN}[INFO]${NC} $1"
@@ -70,9 +71,22 @@ stop_services() {
         rm -f "$PID_DIR/truck-loading-backend.pid"
     fi
 
+    # Stop Holidays Backend
+    if [ -f "$PID_DIR/holidays-backend.pid" ]; then
+        PID=$(cat "$PID_DIR/holidays-backend.pid")
+        if kill -0 "$PID" 2>/dev/null; then
+            log_info "Stopping Holidays Backend (PID: $PID)..."
+            kill "$PID" 2>/dev/null || true
+            sleep 2
+            kill -9 "$PID" 2>/dev/null || true
+        fi
+        rm -f "$PID_DIR/holidays-backend.pid"
+    fi
+
     # Also kill any orphaned processes
     pkill -f "uvicorn.*main:app.*$MCP_BACKEND_PORT" 2>/dev/null || true
     pkill -f "uvicorn.*main:app.*$TRUCK_BACKEND_PORT" 2>/dev/null || true
+    pkill -f "uvicorn.*main:app.*$HOLIDAYS_BACKEND_PORT" 2>/dev/null || true
 
     log_info "All services stopped."
 }
@@ -112,6 +126,16 @@ install_dependencies() {
     # Truck Loading Backend
     log_info "Installing Truck Loading backend dependencies..."
     cd "$SCRIPT_DIR/truck-loading/backend"
+    if [ ! -d "venv" ]; then
+        python3 -m venv venv
+    fi
+    source venv/bin/activate
+    pip install -q -r requirements.txt
+    deactivate
+
+    # Holidays Backend
+    log_info "Installing Holidays backend dependencies..."
+    cd "$SCRIPT_DIR/holidays/backend"
     if [ ! -d "venv" ]; then
         python3 -m venv venv
     fi
@@ -160,6 +184,15 @@ start_services() {
     echo $! > "$PID_DIR/truck-loading-backend.pid"
     deactivate
 
+    # Holidays Backend
+    log_info "Starting Holidays Backend on port $HOLIDAYS_BACKEND_PORT..."
+    cd "$SCRIPT_DIR/holidays/backend"
+    source venv/bin/activate
+    export DATABASE_URL="sqlite:///$SCRIPT_DIR/data/holidays.db"
+    nohup python3 -m uvicorn main:app --host 127.0.0.1 --port $HOLIDAYS_BACKEND_PORT > "$LOG_DIR/holidays-backend.log" 2>&1 &
+    echo $! > "$PID_DIR/holidays-backend.pid"
+    deactivate
+
     cd "$SCRIPT_DIR"
 
     # Wait a moment for services to start
@@ -172,10 +205,12 @@ start_services() {
     echo "=========================================="
     echo "MCP Server Backend:       http://127.0.0.1:$MCP_BACKEND_PORT  (nginx: 8800)"
     echo "Truck Loading Backend:    http://127.0.0.1:$TRUCK_BACKEND_PORT  (nginx: 8000)"
+    echo "Holidays Backend:         http://127.0.0.1:$HOLIDAYS_BACKEND_PORT  (nginx: 8001)"
     echo ""
     echo "Frontends served by nginx as static files:"
     echo "MCP Server Frontend:      nginx port 5174 -> $SCRIPT_DIR/mcp-server/frontend/dist"
     echo "Truck Loading Frontend:   nginx port 5173 -> $SCRIPT_DIR/truck-loading/frontend/dist"
+    echo "Holidays Frontend:        nginx port 5175 -> $SCRIPT_DIR/holidays/frontend/dist"
     echo ""
     echo "Logs: $LOG_DIR/"
     echo "=========================================="
@@ -189,7 +224,7 @@ show_status() {
     echo "Backend Service Status:"
     echo "-----------------------"
 
-    for service in mcp-server-backend truck-loading-backend; do
+    for service in mcp-server-backend truck-loading-backend holidays-backend; do
         if [ -f "$PID_DIR/$service.pid" ]; then
             PID=$(cat "$PID_DIR/$service.pid")
             if kill -0 "$PID" 2>/dev/null; then
@@ -214,6 +249,11 @@ show_status() {
         echo -e "truck-loading-frontend: ${GREEN}Built${NC} ($SCRIPT_DIR/truck-loading/frontend/dist)"
     else
         echo -e "truck-loading-frontend: ${RED}Not built${NC}"
+    fi
+    if [ -d "$SCRIPT_DIR/holidays/frontend/dist" ]; then
+        echo -e "holidays-frontend: ${GREEN}Built${NC} ($SCRIPT_DIR/holidays/frontend/dist)"
+    else
+        echo -e "holidays-frontend: ${RED}Not built${NC}"
     fi
     echo ""
 }
