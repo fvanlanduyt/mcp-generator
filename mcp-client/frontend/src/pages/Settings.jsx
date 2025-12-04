@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Plus, Server, Trash2, RefreshCw, MoreHorizontal, Check, X } from 'lucide-react'
+import { ArrowLeft, Plus, Server, Trash2, RefreshCw, Check, X, ChevronRight, Wifi, WifiOff } from 'lucide-react'
 import Button from '../components/Button'
 import Input from '../components/Input'
 import Modal from '../components/Modal'
@@ -124,7 +124,8 @@ export default function Settings() {
               servers.map((server) => (
                 <div
                   key={server.id}
-                  className="px-6 py-4 flex items-center justify-between hover:bg-gray-50 transition-colors"
+                  className="px-6 py-4 flex items-center justify-between hover:bg-gray-50 transition-colors cursor-pointer"
+                  onClick={() => navigate(`/settings/server/${server.id}`)}
                 >
                   <div className="flex items-center gap-4">
                     <div className="w-10 h-10 bg-mint-100 rounded-lg flex items-center justify-center">
@@ -133,6 +134,12 @@ export default function Settings() {
                     <div>
                       <div className="flex items-center gap-2">
                         <h3 className="font-medium text-gray-900">{server.name}</h3>
+                        {/* Online/Offline indicator */}
+                        {server.config?.online ? (
+                          <Wifi className="w-4 h-4 text-green-500" />
+                        ) : (
+                          <WifiOff className="w-4 h-4 text-gray-400" />
+                        )}
                         <span
                           className={`px-2 py-0.5 text-xs rounded-full ${
                             server.is_active
@@ -142,6 +149,11 @@ export default function Settings() {
                         >
                           {server.is_active ? 'Active' : 'Inactive'}
                         </span>
+                        {server.config?.tool_count > 0 && (
+                          <span className="px-2 py-0.5 text-xs rounded-full bg-mint-100 text-mint-700">
+                            {server.config.tool_count} functions
+                          </span>
+                        )}
                       </div>
                       <p className="text-sm text-gray-500">{server.url}</p>
                       {server.description && (
@@ -152,7 +164,7 @@ export default function Settings() {
 
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={() => handleToggleServer(server)}
+                      onClick={(e) => { e.stopPropagation(); handleToggleServer(server) }}
                       className={`p-2 rounded-lg transition-colors ${
                         server.is_active
                           ? 'text-green-600 hover:bg-green-50'
@@ -167,19 +179,20 @@ export default function Settings() {
                       )}
                     </button>
                     <button
-                      onClick={() => handleSyncServer(server.id)}
+                      onClick={(e) => { e.stopPropagation(); handleSyncServer(server.id) }}
                       className="p-2 rounded-lg text-gray-400 hover:text-mint-600 hover:bg-mint-50 transition-colors"
                       title="Sync functions"
                     >
                       <RefreshCw className="w-5 h-5" />
                     </button>
                     <button
-                      onClick={() => handleDeleteServer(server.id)}
+                      onClick={(e) => { e.stopPropagation(); handleDeleteServer(server.id) }}
                       className="p-2 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
                       title="Delete server"
                     >
                       <Trash2 className="w-5 h-5" />
                     </button>
+                    <ChevronRight className="w-5 h-5 text-gray-300" />
                   </div>
                 </div>
               ))

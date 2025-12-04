@@ -1,6 +1,6 @@
 import axios from 'axios'
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:18002'
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -11,6 +11,8 @@ const api = axios.create({
 
 // MCP Server API
 export const getServers = () => api.get('/api/servers')
+export const getServer = (id) => api.get(`/api/servers/${id}`)
+export const getServerStatus = (id) => api.get(`/api/servers/${id}/status`)
 export const createServer = (data) => api.post('/api/servers', data)
 export const updateServer = (id, data) => api.put(`/api/servers/${id}`, data)
 export const deleteServer = (id) => api.delete(`/api/servers/${id}`)

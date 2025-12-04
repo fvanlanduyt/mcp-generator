@@ -24,6 +24,7 @@ NC='\033[0m' # No Color
 MCP_BACKEND_PORT=18800       # Internal port, nginx listens on 8800
 TRUCK_BACKEND_PORT=18000     # Internal port, nginx listens on 8000
 HOLIDAYS_BACKEND_PORT=18001  # Internal port, nginx listens on 8001
+MCP_CLIENT_BACKEND_PORT=18002  # Internal port for MCP Client
 
 log_info() {
     echo -e "${GREEN}[INFO]${NC} $1"
@@ -83,8 +84,20 @@ stop_services() {
         rm -f "$PID_DIR/holidays-backend.pid"
     fi
 
+    # Stop MCP Client Backend
+    if [ -f "$PID_DIR/mcp-client-backend.pid" ]; then
+        PID=$(cat "$PID_DIR/mcp-client-backend.pid")
+        if kill -0 "$PID" 2>/dev/null; then
+            log_info "Stopping MCP Client Backend (PID: $PID)..."
+            kill "$PID" 2>/dev/null || true
+            sleep 2
+            kill -9 "$PID" 2>/dev/null || true
+        fi
+        rm -f "$PID_DIR/mcp-client-backend.pid"
+    fi
+
     # Stop Frontend dev servers
-    for frontend in mcp-server-frontend truck-loading-frontend holidays-frontend; do
+    for frontend in mcp-server-frontend truck-loading-frontend holidays-frontend mcp-client-frontend; do
         if [ -f "$PID_DIR/$frontend.pid" ]; then
             PID=$(cat "$PID_DIR/$frontend.pid")
             if kill -0 "$PID" 2>/dev/null; then
@@ -101,9 +114,11 @@ stop_services() {
     pkill -f "uvicorn.*main:app.*$MCP_BACKEND_PORT" 2>/dev/null || true
     pkill -f "uvicorn.*main:app.*$TRUCK_BACKEND_PORT" 2>/dev/null || true
     pkill -f "uvicorn.*main:app.*$HOLIDAYS_BACKEND_PORT" 2>/dev/null || true
+    pkill -f "uvicorn.*main:app.*$MCP_CLIENT_BACKEND_PORT" 2>/dev/null || true
     pkill -f "vite.*5173" 2>/dev/null || true
     pkill -f "vite.*5174" 2>/dev/null || true
     pkill -f "vite.*5175" 2>/dev/null || true
+    pkill -f "vite.*5176" 2>/dev/null || true
 
     log_info "All services stopped."
 }
@@ -159,6 +174,21 @@ install_dependencies() {
     source venv/bin/activate
     pip install -q -r requirements.txt
     deactivate
+
+    # MCP Client Backend
+    log_info "Installing MCP Client backend dependencies..."
+    cd "$SCRIPT_DIR/mcp-client/backend"
+    if [ ! -d "venv" ]; then
+        python3 -m venv venv
+    fi
+    source venv/bin/activate
+    pip install -q -r requirements.txt
+    deactivate
+
+    # MCP Client Frontend
+    log_info "Installing MCP Client frontend dependencies..."
+    cd "$SCRIPT_DIR/mcp-client/frontend"
+    npm install -q
 
     cd "$SCRIPT_DIR"
     log_info "All dependencies installed."
@@ -229,6 +259,22 @@ start_services() {
     nohup npm run dev > "$LOG_DIR/holidays-frontend.log" 2>&1 &
     echo $! > "$PID_DIR/holidays-frontend.pid"
 
+    # MCP Client Backend
+    log_info "Starting MCP Client Backend on port $MCP_CLIENT_BACKEND_PORT..."
+    cd "$SCRIPT_DIR/mcp-client/backend"
+    source venv/bin/activate
+    export DATABASE_URL="sqlite:///$SCRIPT_DIR/data/mcp_client.db"
+    export CHROMA_PERSIST_DIRECTORY="$SCRIPT_DIR/data/mcp_client_chroma"
+    nohup python3 -m uvicorn main:app --host 127.0.0.1 --port $MCP_CLIENT_BACKEND_PORT > "$LOG_DIR/mcp-client-backend.log" 2>&1 &
+    echo $! > "$PID_DIR/mcp-client-backend.pid"
+    deactivate
+
+    # MCP Client Frontend
+    log_info "Starting MCP Client Frontend on port 5176..."
+    cd "$SCRIPT_DIR/mcp-client/frontend"
+    nohup npm run dev > "$LOG_DIR/mcp-client-frontend.log" 2>&1 &
+    echo $! > "$PID_DIR/mcp-client-frontend.pid"
+
     cd "$SCRIPT_DIR"
 
     # Wait a moment for services to start
@@ -239,9 +285,10 @@ start_services() {
     echo "=========================================="
     echo "Services running:"
     echo "=========================================="
-    echo "MCP Server:      http://localhost:5174  (backend: $MCP_BACKEND_PORT)"
     echo "Truck Loading:   http://localhost:5173  (backend: $TRUCK_BACKEND_PORT)"
+    echo "MCP Server:      http://localhost:5174  (backend: $MCP_BACKEND_PORT)"
     echo "Holidays:        http://localhost:5175  (backend: $HOLIDAYS_BACKEND_PORT)"
+    echo "MCP Client:      http://localhost:5176  (backend: $MCP_CLIENT_BACKEND_PORT)"
     echo ""
     echo "Logs: $LOG_DIR/"
     echo "=========================================="
@@ -255,7 +302,7 @@ show_status() {
     echo "Service Status:"
     echo "---------------"
 
-    for service in mcp-server-backend truck-loading-backend holidays-backend mcp-server-frontend truck-loading-frontend holidays-frontend; do
+    for service in mcp-server-backend truck-loading-backend holidays-backend mcp-client-backend mcp-server-frontend truck-loading-frontend holidays-frontend mcp-client-frontend; do
         if [ -f "$PID_DIR/$service.pid" ]; then
             PID=$(cat "$PID_DIR/$service.pid")
             if kill -0 "$PID" 2>/dev/null; then

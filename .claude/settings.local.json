@@ -15,7 +15,14 @@
       "Bash(npm run build:*)",
       "Bash(npm install:*)",
       "Bash(git check-ignore:*)",
-      "Bash(npm create:*)"
+      "Bash(npm create:*)",
+      "Bash(python3:*)",
+      "Bash(source:*)",
+      "Bash(pip install:*)",
+      "Bash(./restart-with-updates.sh:*)",
+      "Bash(lsof:*)",
+      "Bash(python -c:*)",
+      "Bash(python:*)"
     ],
     "deny": [],
     "ask": []
