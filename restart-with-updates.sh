@@ -83,10 +83,27 @@ stop_services() {
         rm -f "$PID_DIR/holidays-backend.pid"
     fi
 
+    # Stop Frontend dev servers
+    for frontend in mcp-server-frontend truck-loading-frontend holidays-frontend; do
+        if [ -f "$PID_DIR/$frontend.pid" ]; then
+            PID=$(cat "$PID_DIR/$frontend.pid")
+            if kill -0 "$PID" 2>/dev/null; then
+                log_info "Stopping $frontend (PID: $PID)..."
+                kill "$PID" 2>/dev/null || true
+                sleep 1
+                kill -9 "$PID" 2>/dev/null || true
+            fi
+            rm -f "$PID_DIR/$frontend.pid"
+        fi
+    done
+
     # Also kill any orphaned processes
     pkill -f "uvicorn.*main:app.*$MCP_BACKEND_PORT" 2>/dev/null || true
     pkill -f "uvicorn.*main:app.*$TRUCK_BACKEND_PORT" 2>/dev/null || true
     pkill -f "uvicorn.*main:app.*$HOLIDAYS_BACKEND_PORT" 2>/dev/null || true
+    pkill -f "vite.*5173" 2>/dev/null || true
+    pkill -f "vite.*5174" 2>/dev/null || true
+    pkill -f "vite.*5175" 2>/dev/null || true
 
     log_info "All services stopped."
 }
@@ -148,10 +165,10 @@ install_dependencies() {
 }
 
 # =============================================================================
-# Start all services (backends only - frontends served by nginx as static files)
+# Start all services (backends + frontends for local dev)
 # =============================================================================
 start_services() {
-    log_info "Starting backend services..."
+    log_info "Starting all services..."
 
     # Create data directory
     mkdir -p "$SCRIPT_DIR/data"
@@ -193,24 +210,38 @@ start_services() {
     echo $! > "$PID_DIR/holidays-backend.pid"
     deactivate
 
+    # Start frontends (for local development without nginx)
+    # MCP Server Frontend
+    log_info "Starting MCP Server Frontend on port 5174..."
+    cd "$SCRIPT_DIR/mcp-server/frontend"
+    nohup npm run dev > "$LOG_DIR/mcp-server-frontend.log" 2>&1 &
+    echo $! > "$PID_DIR/mcp-server-frontend.pid"
+
+    # Truck Loading Frontend
+    log_info "Starting Truck Loading Frontend on port 5173..."
+    cd "$SCRIPT_DIR/truck-loading/frontend"
+    nohup npm run dev > "$LOG_DIR/truck-loading-frontend.log" 2>&1 &
+    echo $! > "$PID_DIR/truck-loading-frontend.pid"
+
+    # Holidays Frontend
+    log_info "Starting Holidays Frontend on port 5175..."
+    cd "$SCRIPT_DIR/holidays/frontend"
+    nohup npm run dev > "$LOG_DIR/holidays-frontend.log" 2>&1 &
+    echo $! > "$PID_DIR/holidays-frontend.pid"
+
     cd "$SCRIPT_DIR"
 
     # Wait a moment for services to start
     sleep 3
 
-    log_info "All backend services started!"
+    log_info "All services started!"
     echo ""
     echo "=========================================="
-    echo "Backend services running:"
+    echo "Services running:"
     echo "=========================================="
-    echo "MCP Server Backend:       http://127.0.0.1:$MCP_BACKEND_PORT  (nginx: 8800)"
-    echo "Truck Loading Backend:    http://127.0.0.1:$TRUCK_BACKEND_PORT  (nginx: 8000)"
-    echo "Holidays Backend:         http://127.0.0.1:$HOLIDAYS_BACKEND_PORT  (nginx: 8001)"
-    echo ""
-    echo "Frontends served by nginx as static files:"
-    echo "MCP Server Frontend:      nginx port 5174 -> $SCRIPT_DIR/mcp-server/frontend/dist"
-    echo "Truck Loading Frontend:   nginx port 5173 -> $SCRIPT_DIR/truck-loading/frontend/dist"
-    echo "Holidays Frontend:        nginx port 5175 -> $SCRIPT_DIR/holidays/frontend/dist"
+    echo "MCP Server:      http://localhost:5174  (backend: $MCP_BACKEND_PORT)"
+    echo "Truck Loading:   http://localhost:5173  (backend: $TRUCK_BACKEND_PORT)"
+    echo "Holidays:        http://localhost:5175  (backend: $HOLIDAYS_BACKEND_PORT)"
     echo ""
     echo "Logs: $LOG_DIR/"
     echo "=========================================="
@@ -221,10 +252,10 @@ start_services() {
 # =============================================================================
 show_status() {
     echo ""
-    echo "Backend Service Status:"
-    echo "-----------------------"
+    echo "Service Status:"
+    echo "---------------"
 
-    for service in mcp-server-backend truck-loading-backend holidays-backend; do
+    for service in mcp-server-backend truck-loading-backend holidays-backend mcp-server-frontend truck-loading-frontend holidays-frontend; do
         if [ -f "$PID_DIR/$service.pid" ]; then
             PID=$(cat "$PID_DIR/$service.pid")
             if kill -0 "$PID" 2>/dev/null; then
@@ -236,25 +267,6 @@ show_status() {
             echo -e "$service: ${YELLOW}Not started${NC}"
         fi
     done
-
-    echo ""
-    echo "Frontend Status (static files served by nginx):"
-    echo "------------------------------------------------"
-    if [ -d "$SCRIPT_DIR/mcp-server/frontend/dist" ]; then
-        echo -e "mcp-server-frontend: ${GREEN}Built${NC} ($SCRIPT_DIR/mcp-server/frontend/dist)"
-    else
-        echo -e "mcp-server-frontend: ${RED}Not built${NC}"
-    fi
-    if [ -d "$SCRIPT_DIR/truck-loading/frontend/dist" ]; then
-        echo -e "truck-loading-frontend: ${GREEN}Built${NC} ($SCRIPT_DIR/truck-loading/frontend/dist)"
-    else
-        echo -e "truck-loading-frontend: ${RED}Not built${NC}"
-    fi
-    if [ -d "$SCRIPT_DIR/holidays/frontend/dist" ]; then
-        echo -e "holidays-frontend: ${GREEN}Built${NC} ($SCRIPT_DIR/holidays/frontend/dist)"
-    else
-        echo -e "holidays-frontend: ${RED}Not built${NC}"
-    fi
     echo ""
 }
 
